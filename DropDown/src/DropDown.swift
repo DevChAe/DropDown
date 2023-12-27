@@ -353,6 +353,16 @@ public final class DropDown: UIView {
 	}
     
     /**
+    Update DataSource 이후 스크롤을 최상단으로 이동시킬지 결정.
+     */
+    public var isDataSourceReloadScrollToTop: Bool = false
+    
+    /**
+    TableView Scroll Always Enabled
+     */
+    public var isScrollAlwaysEnabled: Bool = false
+    
+    /**
      The NIB to use for DropDownCells
      
      Changing the cell nib automatically reloads the drop down.
@@ -384,7 +394,7 @@ public final class DropDown: UIView {
 	public var dataSource = [String]() {
 		didSet {
             deselectRows(at: selectedRowIndices)
-			reloadAllComponents()
+            reloadAllComponents(isScrollToTop: isDataSourceReloadScrollToTop)
 		}
 	}
 
@@ -580,7 +590,7 @@ extension DropDown {
 		widthConstraint.constant = layout.width
 		heightConstraint.constant = layout.visibleHeight
 
-		tableView.isScrollEnabled = layout.offscreenHeight > 0
+        tableView.isScrollEnabled = isScrollAlwaysEnabled || layout.offscreenHeight > 0
 
 		DispatchQueue.main.async { [weak self] in
 			self?.tableView.flashScrollIndicators()
@@ -726,7 +736,15 @@ extension DropDown {
 		let y = anchorViewY + bottomOffset.y
 		
 		let maxY = y + tableHeight
-		let windowMaxY = window.bounds.maxY - DPDConstant.UI.HeightPadding - offsetFromWindowBottom
+        var safeAreaBottom: CGFloat = 0
+        
+        if #available(iOS 11.0, *) {
+            safeAreaBottom = window.safeAreaInsets.bottom
+        } else {
+            // Fallback on earlier versions
+        }
+        
+        let windowMaxY = window.bounds.maxY - DPDConstant.UI.HeightPadding - offsetFromWindowBottom - safeAreaBottom
 		
 		let keyboardListener = KeyboardListener.sharedInstance
 		let keyboardMinY = keyboardListener.keyboardFrame.minY - DPDConstant.UI.HeightPadding
@@ -749,7 +767,14 @@ extension DropDown {
 		let x = anchorViewX + topOffset.x
 		var y = (anchorViewMaxY + topOffset.y) - tableHeight
 
-		let windowY = window.bounds.minY + DPDConstant.UI.HeightPadding
+        var windowYAix = window.bounds.minY
+        
+        if #available(iOS 11.0, *) {
+            windowYAix = window.safeAreaInsets.top
+        } else {
+            // Fallback on earlier versions
+        }
+        let windowY = windowYAix + DPDConstant.UI.HeightPadding
 
 		if y < windowY {
 			offscreenHeight = abs(y - windowY)
@@ -836,7 +861,7 @@ extension DropDown {
 	- returns: Wether it succeed and how much height is needed to display all cells at once.
 	*/
 	@discardableResult
-    public func show(onTopOf window: UIWindow? = nil, beforeTransform transform: CGAffineTransform? = nil, anchorPoint: CGPoint? = nil) -> (canBeDisplayed: Bool, offscreenHeight: CGFloat?) {
+    public func show(onTopOf window: UIWindow? = nil, beforeTransform transform: CGAffineTransform? = nil, anchorPoint: CGPoint? = nil, animated: Bool = true) -> (canBeDisplayed: Bool, offscreenHeight: CGFloat?) {
 		if self == DropDown.VisibleDropDown && DropDown.VisibleDropDown?.isHidden == false { // added condition - DropDown.VisibleDropDown?.isHidden == false -> to resolve forever hiding dropdown issue when continuous taping on button - Kartik Patel - 2016-12-29
 			return (true, 0)
 		}
@@ -879,14 +904,18 @@ extension DropDown {
 
 		layoutIfNeeded()
 
-		UIView.animate(
-			withDuration: animationduration,
-			delay: 0,
-			options: animationEntranceOptions,
-			animations: { [weak self] in
-				self?.setShowedState()
-			},
-			completion: nil)
+        if animated {
+            UIView.animate(
+                withDuration: animationduration,
+                delay: 0,
+                options: animationEntranceOptions,
+                animations: { [weak self] in
+                    self?.setShowedState()
+                },
+                completion: nil)
+        } else {
+            setShowedState()
+        }
 
 		accessibilityViewIsModal = true
 		UIAccessibility.post(notification: .screenChanged, argument: self)
@@ -908,7 +937,7 @@ extension DropDown {
 	}
 
 	/// Hides the drop down.
-	public func hide() {
+	public func hide(animated: Bool = true) {
 		if self == DropDown.VisibleDropDown {
 			/*
 			If one drop down is showed and another one is not
@@ -922,20 +951,27 @@ extension DropDown {
 			return
 		}
 
-		UIView.animate(
-			withDuration: animationduration,
-			delay: 0,
-			options: animationExitOptions,
-			animations: { [weak self] in
-				self?.setHiddentState()
-			},
-			completion: { [weak self] finished in
-				guard let `self` = self else { return }
-
-				self.isHidden = true
-				self.removeFromSuperview()
-				UIAccessibility.post(notification: .screenChanged, argument: nil)
-		})
+        if animated {
+            UIView.animate(
+                withDuration: animationduration,
+                delay: 0,
+                options: animationExitOptions,
+                animations: { [weak self] in
+                    self?.setHiddentState()
+                },
+                completion: { [weak self] finished in
+                    guard let `self` = self else { return }
+                    
+                    self.isHidden = true
+                    self.removeFromSuperview()
+                    UIAccessibility.post(notification: .screenChanged, argument: nil)
+                })
+        } else {
+            setHiddentState()
+            isHidden = true
+            removeFromSuperview()
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
+        }
 	}
 
 	fileprivate func cancel() {
@@ -965,8 +1001,11 @@ extension DropDown {
 	`dataSource`, `textColor`, `textFont`, `selectionBackgroundColor`
 	and `cellConfiguration` implicitly calls `reloadAllComponents()`.
 	*/
-	public func reloadAllComponents() {
+	public func reloadAllComponents(isScrollToTop: Bool = false) {
 		DispatchQueue.executeOnMainThread {
+            if isScrollToTop {
+                self.tableView.setContentOffset(.zero, animated: false)
+            }
 			self.tableView.reloadData()
 			self.setNeedsUpdateConstraints()
 		}
